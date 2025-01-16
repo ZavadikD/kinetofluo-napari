@@ -278,21 +278,24 @@ def comp_detector(viewer: Viewer, DRAQ_img:Image, DAPI_img:Image, cell_mask:Labe
                 dapi_l_lab[one_cell_box[0]:one_cell_box[2],one_cell_box[1]:one_cell_box[3]] = dq_mask
                 dapi_h_lab[one_cell_box[0]:one_cell_box[2],one_cell_box[1]:one_cell_box[3]] = qd_mask
 
+                #nucl_labels, nucl_num = ndi.label(nucl_mask)
+
+
             yield (dapi_l_lab, dapi_h_lab, f'{DAPI_img.name}_compartments_mask')
 
         _comp_detector()
 
 
 @magic_factory(call_button='Mark species',)
-def species_annotator(viewer: Viewer, base_img: Image, sp_labels:list=['A','B','C']):
+def species_annotator(viewer: Viewer, base_img: Image, sp_labels:list=['Sros','Capsa','Yeast', 'Theca', 'Diplo', 'KIN', 'KIN']):
     COLOR_CYCLE = ['#FF0000',
                    '#008000',
                    '#0000FF',
                    '#FFFF00',
                    '#FF00FF']
     
-    if len(sp_labels) > 5:
-        raise ValueError('Too many species, 5 or less is recommended!')
+    if len(sp_labels) > 20:
+        raise ValueError('Too many species, 20 or less is recommended!')
     else:
         labels = sp_labels
 
@@ -345,6 +348,10 @@ def species_annotator(viewer: Viewer, base_img: Image, sp_labels:list=['A','B','
 @magic_factory(call_button='Save nucleus data',)
 def save_nucl_df(nucleus_img:Image,
                       cell_mask: Labels, nucleus_mask:Labels,
+                    #####For compartment measurements
+                      kDNA_mask:Labels,
+                      nuclDNA_mask:Labels,
+                    #####For compartment measurements
                       sp_markers:Points,
                       saving_path:pathlib.Path = os.getcwd()):
     output_data_frame = pd.DataFrame({'id':[],
@@ -353,7 +360,12 @@ def save_nucl_df(nucleus_img:Image,
                                       'cell_coord':[],
                                       'nucl_sum_int':[],
                                       'cyto_mean_int':[],
-                                      'nucl_sum_int_corr':[]})
+                                      'nucl_sum_int_corr':[],
+                                      #####For compartment measurements
+                                      'one_kDNA_int':[],
+                                      'one_nuclDNA_int':[],
+                                      'one_kDNA_int_corr':[],
+                                      'one_nuclDNA_int_corr':[]})
 
     sp_list = sp_markers.properties['label']
     sp_coord = sp_markers.data
@@ -361,6 +373,12 @@ def save_nucl_df(nucleus_img:Image,
     img_data = np.sum(nucleus_img.data, axis=0)
     c_mask = cell_mask.data
     n_mask = nucleus_mask.data != 0
+
+    #####For compartment measurements
+    kDNA_mask = kDNA_mask.data != 0
+    nuclDNA_mask = nuclDNA_mask.data != 0
+    #####For compartment measurements
+
 
     if c_mask.ndim != 2 or n_mask.ndim != 2:
         raise ValueError('Incorrect mask shape!')
@@ -390,11 +408,189 @@ def save_nucl_df(nucleus_img:Image,
 
             one_nucl_int_corr = one_nucl_int - one_cytoplasm_int
 
-            cell_row = [nucleus_img.name, cell_region.label, one_cell_sp, one_cell_coord, one_nucl_int, one_cytoplasm_int, one_nucl_int_corr]
+            #####For compartment measurements
+
+            one_kDNA_mask = np.copy(kDNA_mask)
+            one_kDNA_mask[~one_cell_mask] = 0
+            one_kDNA_int = np.sum(img_data, where=one_kDNA_mask)
+            one_kDNA_int_corr = one_kDNA_int - one_cytoplasm_int
+
+            one_nuclDNA_mask = np.copy(nuclDNA_mask)
+            one_nuclDNA_mask[~one_cell_mask] = 0
+            one_nuclDNA_int = np.sum(img_data, where=one_nuclDNA_mask)
+            one_nuclDNA_int_corr = one_nuclDNA_int - one_cytoplasm_int
+
+            #####For compartment measurements
+
+            cell_row = [nucleus_img.name, cell_region.label, one_cell_sp, one_cell_coord, one_nucl_int, one_cytoplasm_int, one_nucl_int_corr, one_kDNA_int, one_nuclDNA_int, one_kDNA_int_corr, one_nuclDNA_int_corr]
             output_data_frame.loc[len(output_data_frame.index)] = cell_row
 
         output_data_frame.to_csv(os.path.join(saving_path, f'{nucleus_img.name}_nucl_df.csv'))
         show_info(f'{nucleus_img.name}: nucleus int data frame saved')
+
+@magic_factory(call_button='Save kDNA data',)
+def save_kDNA_df(nucleus_img:Image,
+                      cell_mask: Labels, nucleus_mask:Labels, kDNA_mask:Labels,
+                    #####For compartment measurements
+                      
+                      #nuclDNA_mask:Labels,
+                    #####For compartment measurements
+                      sp_markers:Points,
+                      saving_path:pathlib.Path = os.getcwd()):
+    output_data_frame = pd.DataFrame({'id':[],
+                                      'cell':[],
+                                      'sp':[],
+                                      'cell_coord':[],
+                                      'cyto_mean_int':[],
+                                    
+                                      #####For compartment measurements
+                                      'one_kDNA_int':[],
+                                      #'one_nuclDNA_int':[],
+                                      'one_kDNA_int_corr':[]#,
+                                      #'one_nuclDNA_int_corr':[]
+                                      })
+
+    sp_list = sp_markers.properties['label']
+    sp_coord = sp_markers.data
+
+    img_data = np.sum(nucleus_img.data, axis=0)
+    c_mask = cell_mask.data
+    n_mask = nucleus_mask.data != 0
+
+
+    #####For compartment measurements
+    kDNA_mask = kDNA_mask.data != 0
+
+    #####For compartment measurements
+
+
+    if c_mask.ndim != 2 or kDNA_mask.ndim != 2:
+        raise ValueError('Incorrect mask shape!')
+    else:
+        for cell_region in measure.regionprops(c_mask):
+            one_cell_box = cell_region.bbox
+
+            for sp_i in range(len(sp_list)):
+                if 'KIN' in sp_list[sp_i] :
+                    one_point_coord = sp_coord[sp_i]
+                    if one_cell_box[0] < one_point_coord[0] < one_cell_box[2] and one_cell_box[1] < one_point_coord[1] < one_cell_box[3]:
+                        one_cell_sp = sp_list[sp_i]
+                        one_cell_coord = str([int(one_point_coord[0]), int(one_point_coord[-1])])
+                        print(sp_i, one_cell_sp)
+                        break
+                    one_cell_sp = 'NA'
+                    one_cell_coord = 'NA'
+                #else : next
+
+            one_cell_mask = c_mask == cell_region.label
+
+            one_nucl_mask = np.copy(n_mask)
+            one_nucl_mask[~one_cell_mask] = 0
+            one_nucl_int = np.sum(img_data, where=one_nucl_mask)
+
+
+            one_cytoplasm_mask = np.copy(one_cell_mask)
+            one_cytoplasm_mask[one_nucl_mask] = 0
+            one_cytoplasm_int = np.mean(img_data, where=one_cytoplasm_mask, dtype=type(one_nucl_int))
+
+            #####For compartment measurements
+
+            one_kDNA_mask = np.copy(kDNA_mask)
+            one_kDNA_mask[~one_cell_mask] = 0
+            one_kDNA_int = np.sum(img_data, where=one_kDNA_mask)
+            one_kDNA_int_corr = one_kDNA_int - one_cytoplasm_int
+
+
+            #####For compartment measurements
+
+            cell_row = [nucleus_img.name, cell_region.label, one_cell_sp, one_cell_coord, one_cytoplasm_int, one_kDNA_int, one_kDNA_int_corr]
+            output_data_frame.loc[len(output_data_frame.index)] = cell_row
+
+        output_data_frame.to_csv(os.path.join(saving_path, f'{nucleus_img.name}_kDNA_df.csv'))
+        show_info(f'{nucleus_img.name}: kDNA int data frame saved')
+
+
+@magic_factory(call_button='Save kinet nuclDNA data',)
+def save_KINnuclDNA_df(nucleus_img:Image,
+                      cell_mask: Labels, nucleus_mask:Labels,
+                    #####For compartment measurements
+                      
+                      nuclDNA_mask:Labels,
+                    #####For compartment measurements
+                      sp_markers:Points,
+                      saving_path:pathlib.Path = os.getcwd()):
+    output_data_frame = pd.DataFrame({'id':[],
+                                      'cell':[],
+                                      'sp':[],
+                                      'cell_coord':[],
+                                      'cyto_mean_int':[],
+                                    
+                                      #####For compartment measurements
+                                      
+                                      'one_nuclDNA_int':[],
+                                      
+                                      'one_nuclDNA_int_corr':[]
+                                      })
+
+    sp_list = sp_markers.properties['label']
+    sp_coord = sp_markers.data
+
+    img_data = np.sum(nucleus_img.data, axis=0)
+    c_mask = cell_mask.data
+    n_mask = nucleus_mask.data != 0
+
+
+
+    #####For compartment measurements
+    nuclDNA_mask = nuclDNA_mask.data != 0
+
+    #####For compartment measurements
+
+
+    if c_mask.ndim != 2 or nuclDNA_mask.ndim != 2:
+        raise ValueError('Incorrect mask shape!')
+    else:
+        for cell_region in measure.regionprops(c_mask):
+            one_cell_box = cell_region.bbox
+
+            for sp_i in range(len(sp_list)):
+                if 'KIN' in sp_list[sp_i] :
+                    one_point_coord = sp_coord[sp_i]
+                    if one_cell_box[0] < one_point_coord[0] < one_cell_box[2] and one_cell_box[1] < one_point_coord[1] < one_cell_box[3]:
+                        one_cell_sp = sp_list[sp_i]
+                        one_cell_coord = str([int(one_point_coord[0]), int(one_point_coord[-1])])
+                        print(sp_i, one_cell_sp)
+                        break
+                    one_cell_sp = 'NA'
+                    one_cell_coord = 'NA'
+                #else : next
+
+            one_cell_mask = c_mask == cell_region.label
+
+            one_nucl_mask = np.copy(n_mask)
+            one_nucl_mask[~one_cell_mask] = 0
+            one_nucl_int = np.sum(img_data, where=one_nucl_mask)
+
+            one_cytoplasm_mask = np.copy(one_cell_mask)
+            one_cytoplasm_mask[one_nucl_mask] = 0
+            one_cytoplasm_int = np.mean(img_data, where=one_cytoplasm_mask, dtype=type(one_nucl_int))
+
+            #####For compartment measurements
+
+            one_nuclDNA_mask = np.copy(nuclDNA_mask)
+            one_nuclDNA_mask[~one_cell_mask] = 0
+            one_nuclDNA_int = np.sum(img_data, where=one_nuclDNA_mask)
+            one_nuclDNA_int_corr = one_nuclDNA_int - one_cytoplasm_int
+
+
+            #####For compartment measurements
+
+            cell_row = [nucleus_img.name, cell_region.label, one_cell_sp, one_cell_coord, one_cytoplasm_int, one_nuclDNA_int, one_nuclDNA_int_corr]
+            output_data_frame.loc[len(output_data_frame.index)] = cell_row
+
+        output_data_frame.to_csv(os.path.join(saving_path, f'{nucleus_img.name}_KIN_nuclDNA_df.csv'))
+        show_info(f'{nucleus_img.name}: KIN_nuclDNA int data frame saved')
+
 
 
 @magic_factory(call_button='Print fetures',)
