@@ -27,6 +27,9 @@ from skimage import morphology
 from skimage import measure
 from skimage import restoration
 from skimage import segmentation
+from skimage.feature import peak_local_max
+from skimage.segmentation import watershed
+from skimage.transform import resize
 
 # import matplotlib.pyplot as plt
 # from matplotlib.backends.backend_qt5agg import FigureCanvas
@@ -208,7 +211,7 @@ def nucl_detector(viewer: Viewer, DRAQ_img:Image, DAPI_img:Image, cell_mask:Labe
 
 
 @magic_factory(call_button='Segment compartments',)
-def comp_detector(viewer: Viewer, DRAQ_img:Image, DAPI_img:Image, cell_mask:Labels,
+def comp_detector(viewer: Viewer, DRAQ_img:Image, DAPI_img:Image, cell_mask:Labels, perfect_species:bool = False,
                   n_class:int=2):
     if input is not None:
         def _save_comp_masks(params):
@@ -272,11 +275,62 @@ def comp_detector(viewer: Viewer, DRAQ_img:Image, DAPI_img:Image, cell_mask:Labe
                 # overlap_mask = (qd_mask & dq_mask)
 
                 overlap_percent = np.sum((qd_mask & dq_mask)) / np.sum((qd_mask | dq_mask))
+                #####for 13G
+
 
                 show_info(f'Cell {cell_region.label}: compartments overlap {overlap_percent}%')
 
                 dapi_l_lab[one_cell_box[0]:one_cell_box[2],one_cell_box[1]:one_cell_box[3]] = dq_mask
                 dapi_h_lab[one_cell_box[0]:one_cell_box[2],one_cell_box[1]:one_cell_box[3]] = qd_mask
+
+
+                if perfect_species :
+
+                    ## from https://scikit-image.org/docs/stable/auto_examples/segmentation/plot_watershed.html#sphx-glr-auto-examples-segmentation-plot-watershed-py
+                    in_img = qd_mask
+                    distance = ndi.distance_transform_edt(in_img)
+
+                    #in_img = in_img.astype(np.uint8)
+
+                    coords = peak_local_max(distance, labels=in_img)
+
+                    mask = np.zeros(distance.shape, dtype=bool)
+                    mask[tuple(coords.T)] = True
+                    markers, _ = ndi.label(mask)
+                    labels = watershed(-distance, markers, mask=in_img)
+
+
+                    for compartment in measure.regionprops(labels, intensity_image=dq_norm):
+
+                        abs_max = np.max(compartment.intensity_image)
+                        local_max = np.max(compartment.intensity_image[~compartment.image])
+
+                        compartment_shape = compartment.image.shape
+    
+    # Extract the region of the dapi_l_lab or dapi_h_lab using the bounding box (one_cell_box)
+                        region_l = dapi_l_lab[one_cell_box[0]:one_cell_box[2], one_cell_box[1]:one_cell_box[3]]
+                        region_h = dapi_h_lab[one_cell_box[0]:one_cell_box[2], one_cell_box[1]:one_cell_box[3]]
+
+    # Resize compartment.image to match the region size
+                        compartment_resized = resize(compartment.image, (region_l.shape[0], region_l.shape[1]), mode='constant')
+
+    # Compare abs_max and local_max, and assign to the appropriate label region
+                        if abs_max > local_max:
+                            region_l[:] = compartment_resized  # Assign the resized image to the region in dapi_l_lab
+                        else:
+                            region_h[:] = compartment_resized  # Assign the resized image to the region in dapi_h_lab
+
+
+                 # overlap_mask = (qd_mask & dq_mask)
+
+                    overlap_percent = np.sum((qd_mask & dq_mask)) / np.sum((qd_mask | dq_mask))
+   
+
+                #####for 13G
+
+
+
+
 
                 #nucl_labels, nucl_num = ndi.label(nucl_mask)
 
